@@ -1,0 +1,140 @@
+diff --git a/Threema/Core/ThreemaCalls/VoIPCallKitManager.swift b/Threema/Core/ThreemaCalls/VoIPCallKitManager.swift
+index c112ce2..081de8a 100644
+--- a/Threema/Core/ThreemaCalls/VoIPCallKitManager.swift
++++ b/Threema/Core/ThreemaCalls/VoIPCallKitManager.swift
+@@ -47,3 +47,12 @@
+     private let businessLayerWaitTimeout: TimeInterval
+ 
++    #if targetEnvironment(simulator)
++        /// CI test patch, not upstream: the CallKit UUIDs of the outgoing calls `startCall` kept away from CallKit
++        /// (`startCallWithoutCallKit(uuid:callID:)`), for as long as the process lives (one UUID per call), so that
++        /// no later report or action about such a call goes to CallKit. Only read and written on
++        /// `simulatorCallsQueue`.
++        private var simulatorCallsWithoutCallKit = Set<UUID>()
++        private let simulatorCallsQueue = DispatchQueue(label: "ch.threema.VoIPCallKitManager.simulatorCallsQueue")
++
++    #endif
+     // MARK: - Lifecycle
+@@ -192,6 +201,12 @@
+ 
+         let (uuid, isNew) = callIDService.uuid(for: callID)
+         assert(isNew)
++        #if targetEnvironment(simulator)
++            // CI test patch, not upstream: the simulator's CallKit ends an outgoing call at once, so no start action
++            if startCallWithoutCallKit(uuid: uuid, callID: callID) {
++                return
++            }
++        #endif
+         let startCallAction = CXStartCallAction(call: uuid, handle: handle)
+         let transaction = CXTransaction(action: startCallAction)
+         callController.request(transaction) { error in
+@@ -237,5 +252,11 @@
+         let (uuid, isNew) = callIDService.uuid(for: callID)
+         assert(!isNew)
++        #if targetEnvironment(simulator)
++            // CI test patch, not upstream: nothing to report for a call CallKit never had
++            if isSimulatorCallWithoutCallKit(uuid) {
++                return
++            }
++        #endif
+         provider.reportOutgoingCall(with: uuid, connectedAt: Date())
+         answerAction?.fulfill()
+     }
+@@ -258,6 +279,16 @@
+             return
+         }
+ 
++        #if targetEnvironment(simulator)
++            // CI test patch, not upstream: a call CallKit never had needs no end call action
++            if isSimulatorCallWithoutCallKit(uuid) {
++                DDLogNotice(
++                    "[Call:1to1:CallKit] [cid=\(callID)]: Simulator: call without CallKit ended (callUUID=\(uuid))"
++                )
++                return
++            }
++
++        #endif
+         // Only set when the action is really requested, otherwise the next end call action of CallKit is skipped
+         dismissCallKitDirectly = true
+ 
+@@ -335,6 +366,12 @@
+         }
+ 
+         let (uuid, _) = callIDService.uuid(for: callID)
++        #if targetEnvironment(simulator)
++            // CI test patch, not upstream: CallKit cannot hold a call it never had
++            if isSimulatorCallWithoutCallKit(uuid) {
++                return
++            }
++        #endif
+ 
+         DDLogNotice(
+             "[Call:1to1:CallKit] [cid=\(callID)]: Requesting audio session reactivation via hold/unhold"
+@@ -442,6 +479,37 @@
+             action.fail()
+         }
+     }
++    #if targetEnvironment(simulator)
++
++        // MARK: - Simulator: outgoing calls without CallKit (CI test patch, not upstream)
++
++        /// In the simulator, CallKit performs the start call action and then disconnects the call within a quarter of
++        /// a second: callservicesd opens `facetime://?showInCallUI=1` for an outgoing call, the simulator has no app
++        /// for that scheme, and callservicesd ends the call "because there wont be a UI to host the call" (iOS 26.5
++        /// and 17.5 alike), which reaches the app as an end call action it did not request. So an outgoing call
++        /// in the simulator never goes to CallKit: no start call action, no end call action, no reports, no
++        /// hold/unhold, and no `provider(_:didActivate:)`; `VoIPCallService` acquires the call's audio claim as a group
++        /// call does, whose driver activates the audio session itself. Everything else, the offer, the answer, ICE,
++        /// WebRTC's media and the hangups, is the app's own call flow. Incoming calls still go to CallKit.
++        ///
++        /// - Returns: `true`: the call was kept away from CallKit
++        private func startCallWithoutCallKit(uuid: UUID, callID: VoIPCallID) -> Bool {
++            simulatorCallsQueue.sync {
++                _ = simulatorCallsWithoutCallKit.insert(uuid)
++            }
++            DDLogNotice(
++                "[Call:1to1:CallKit] [cid=\(callID)]: Simulator: outgoing call without CallKit (callUUID=\(uuid))"
++            )
++            return true
++        }
++
++        /// Whether `startCallWithoutCallKit(uuid:callID:)` kept this call away from CallKit.
++        private func isSimulatorCallWithoutCallKit(_ uuid: UUID) -> Bool {
++            simulatorCallsQueue.sync {
++                simulatorCallsWithoutCallKit.contains(uuid)
++            }
++        }
++    #endif
+ }
+ 
+ // MARK: - CXProviderDelegate
+diff --git a/Threema/Core/ThreemaCalls/VoIPCallService.swift b/Threema/Core/ThreemaCalls/VoIPCallService.swift
+index b7a9d4f..d3fc904 100644
+--- a/Threema/Core/ThreemaCalls/VoIPCallService.swift
++++ b/Threema/Core/ThreemaCalls/VoIPCallService.swift
+@@ -640,10 +640,21 @@
+         }
+ 
+         do {
+-            let claim = try await audioSessionManager.acquire(
+-                .call,
+-                output: speakerActive ? .speaker : .system
+-            )
++            #if targetEnvironment(simulator)
++                // CI test patch, not upstream: in the simulator an outgoing call has no CallKit
++                // (`VoIPCallKitManager.startCallWithoutCallKit(uuid:callID:)`), so no `provider(_:didActivate:)` would
++                // ever activate its audio session. The group call kind's driver activates the session itself (same
++                // category, mode and options) and deactivates it on release.
++                let claim = try await audioSessionManager.acquire(
++                    callStartedBySelf ? .groupCall : .call,
++                    output: speakerActive ? .speaker : .system
++                )
++            #else
++                let claim = try await audioSessionManager.acquire(
++                    .call,
++                    output: speakerActive ? .speaker : .system
++                )
++            #endif
+ 
+             audioSessionClaim = claim
+ 

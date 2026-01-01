@@ -1,0 +1,11 @@
+  turn:
+    enabled: true
+    sharedSecretFile: "@SEC@/turn-secret.txt"
+    credentialTtl: 1h
+    listen: "@TURN_IP@:@TURN_PORT@"
+    urls:
+      - "turn:@TURN_IP@:@TURN_PORT@?transport=udp"
+      - "turn:@TURN_IP@:@TURN_PORT@?transport=tcp"
+    dualStackUrls:
+      - "turn:@TURN_IP@:@TURN_PORT@?transport=udp"
+      - "turn:@TURN_IP@:@TURN_PORT@?transport=tcp"
