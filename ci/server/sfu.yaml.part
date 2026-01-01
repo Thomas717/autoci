@@ -1,0 +1,5 @@
+  sfu:
+    enabled: true
+    baseUrl: "@PUBLIC_URL@/sfu/"
+    listen: "@SFU_IP@:@SFU_PORT@"
+    publicIp: "@SFU_IP@"

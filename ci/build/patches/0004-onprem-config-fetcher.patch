@@ -1,0 +1,104 @@
+diff --git a/ThreemaFramework/OnPrem/OnPremConfigFetcher.swift b/ThreemaFramework/OnPrem/OnPremConfigFetcher.swift
+index 9a2d1be..aa613ee 100644
+--- a/ThreemaFramework/OnPrem/OnPremConfigFetcher.swift
++++ b/ThreemaFramework/OnPrem/OnPremConfigFetcher.swift
+@@ -14,7 +14,17 @@ final class OnPremConfigFetcher: OnPremConfigFetcherProtocol {
+     private weak var delegate: OnPremConfigFetcherDelegate?
+ 
+     private static var currentTask: Task<OnPremConfig, any Error>? = nil
+-    private var cachedConfig: OnPremConfig?
++    private static let currentTaskLock = NSLock()
++    private let cachedConfigLock = NSLock()
++    private var cachedConfigStorage: OnPremConfig?
++    private var cachedConfig: OnPremConfig? {
++        get {
++            cachedConfigLock.withLock { cachedConfigStorage }
++        }
++        set {
++            cachedConfigLock.withLock { cachedConfigStorage = newValue }
++        }
++    }
+ 
+     init(
+         configDownloader: OnPremConfigDownloaderProtocol,
+@@ -45,44 +55,49 @@ final class OnPremConfigFetcher: OnPremConfigFetcherProtocol {
+                 return
+             }
+ 
+-            let task: Task<OnPremConfig, any Error>
+-            if let currentTask = OnPremConfigFetcher.currentTask {
+-                DDLogVerbose("[Fetch OPPF] Load existing fetch task to wait on it")
+-                task = currentTask
+-            }
+-            else {
+-                DDLogVerbose("[Fetch OPPF] Create new fetch task")
+-                let newTask = Task {
+-                    var doFetching = true
+-                    while doFetching {
+-                        do {
+-                            let config = try await self.fetch()
+-                            doFetching = false
+-                            return config
+-                        }
+-                        catch OnPremConfigError.fetchRequestFailed {
+-                            if await configDownloader.isRecoveryModeEnabled {
+-                                DDLogVerbose(
+-                                    "[Fetch OPPF] Fetch failed while in recovery, wait 10s to avoid too many requests in a short time"
+-                                )
+-                                try await Task.sleep(seconds: 10)
++            let task: Task<OnPremConfig, any Error> = OnPremConfigFetcher.currentTaskLock.withLock {
++                if let currentTask = OnPremConfigFetcher.currentTask {
++                    DDLogVerbose("[Fetch OPPF] Load existing fetch task to wait on it")
++                    return currentTask
++                }
++                else {
++                    DDLogVerbose("[Fetch OPPF] Create new fetch task")
++                    let newTask = Task {
++                        var doFetching = true
++                        while doFetching {
++                            do {
++                                let config = try await self.fetch()
++                                doFetching = false
++                                return config
++                            }
++                            catch OnPremConfigError.fetchRequestFailed {
++                                if await configDownloader.isRecoveryModeEnabled {
++                                    DDLogVerbose(
++                                        "[Fetch OPPF] Fetch failed while in recovery, wait 10s to avoid too many requests in a short time"
++                                    )
++                                    try await Task.sleep(seconds: 10)
++                                }
++                                throw OnPremConfigError.fetchRequestFailed
++                            }
++                            catch {
++                                doFetching = false
++                                DDLogError("[Fetch OPPF] Fetch failed: \(error)")
++                                throw error
+                             }
+-                            throw OnPremConfigError.fetchRequestFailed
+-                        }
+-                        catch {
+-                            doFetching = false
+-                            DDLogError("[Fetch OPPF] Fetch failed: \(error)")
+-                            throw error
+                         }
+                     }
+-                }
+-                OnPremConfigFetcher.currentTask = newTask
++                    OnPremConfigFetcher.currentTask = newTask
+ 
+-                task = newTask
++                    return newTask
++                }
+             }
+ 
+             defer {
+-                OnPremConfigFetcher.currentTask = nil
++                OnPremConfigFetcher.currentTaskLock.withLock {
++                    if OnPremConfigFetcher.currentTask == task {
++                        OnPremConfigFetcher.currentTask = nil
++                    }
++                }
+             }
+ 
+             do {

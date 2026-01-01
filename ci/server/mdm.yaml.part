@@ -1,0 +1,5 @@
+work:
+  mdmOverride: true
+  mdmParameters:
+    th_skip_wizard: true
+    th_safe_enable: false
