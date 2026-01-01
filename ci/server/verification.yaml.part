@@ -1,0 +1,12 @@
+directory:
+  verification:
+    email:
+      url: "http://127.0.0.1:@NOTIFY_PORT@/email"
+      bearerTokenFile: "@SEC@/notify-token.txt"
+      from: "Threema CI <noreply@example.com>"
+    sms:
+      url: "http://127.0.0.1:@NOTIFY_PORT@/sms"
+      bearerTokenFile: "@SEC@/notify-token.txt"
+    call:
+      url: "http://127.0.0.1:@NOTIFY_PORT@/call"
+      bearerTokenFile: "@SEC@/notify-token.txt"
