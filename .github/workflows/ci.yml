@@ -1,0 +1,661 @@
+name: ci
+
+on:
+  workflow_dispatch:
+    inputs:
+      s2:
+        description: "stage 2"
+        type: boolean
+        default: false
+      s3:
+        description: "stage 3"
+        type: boolean
+        default: false
+      s4:
+        description: "stage 4"
+        type: boolean
+        default: false
+      s5:
+        description: "stage 5"
+        type: boolean
+        default: false
+      s6:
+        description: "stage 6"
+        type: boolean
+        default: false
+      s7:
+        description: "stage 7"
+        type: boolean
+        default: false
+      s8:
+        description: "stage 8"
+        type: boolean
+        default: false
+      s9:
+        description: "stage 9"
+        type: boolean
+        default: false
+      s10:
+        description: "stage 10"
+        type: boolean
+        default: false
+      s11:
+        description: "stage 11"
+        type: boolean
+        default: false
+      s12:
+        description: "stage 12"
+        type: boolean
+        default: false
+      s13:
+        description: "stage 13"
+        type: boolean
+        default: false
+      s14:
+        description: "stage 14"
+        type: boolean
+        default: false
+      s15:
+        description: "stage 15"
+        type: boolean
+        default: false
+      s16:
+        description: "stage 16"
+        type: boolean
+        default: false
+      s17:
+        description: "stage 17"
+        type: boolean
+        default: false
+      s18:
+        description: "stage 18"
+        type: boolean
+        default: false
+      s19:
+        description: "stage 19"
+        type: boolean
+        default: false
+      s20:
+        description: "stage 20"
+        type: boolean
+        default: false
+      more:
+        description: "more stages (21-26, e.g. 23 24 25)"
+        type: string
+        default: ""
+      force_build:
+        description: "rebuild"
+        type: boolean
+        default: false
+      key_patch:
+        description: "key"
+        type: choice
+        options: [bundle, source]
+        default: bundle
+      cert_profile:
+        description: "cert"
+        type: choice
+        options: [selfsigned, ca-leaf]
+        default: selfsigned
+      route:
+        description: "route"
+        type: choice
+        options: [link, mdm]
+        default: link
+  push:
+    branches: [run]
+
+permissions: {}
+
+concurrency:
+  group: ci
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sim:
+    name: build
+    runs-on: macos-26
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    outputs:
+      attempt: ${{ github.run_attempt }}
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+      MISE_YES: "1"
+      IN_S2: ${{ inputs.s2 }}
+      IN_S3: ${{ inputs.s3 }}
+      IN_S4: ${{ inputs.s4 }}
+      IN_S5: ${{ inputs.s5 }}
+      IN_S6: ${{ inputs.s6 }}
+      IN_S7: ${{ inputs.s7 }}
+      IN_S8: ${{ inputs.s8 }}
+      IN_S9: ${{ inputs.s9 }}
+      IN_S10: ${{ inputs.s10 }}
+      IN_S11: ${{ inputs.s11 }}
+      IN_S12: ${{ inputs.s12 }}
+      IN_S13: ${{ inputs.s13 }}
+      IN_S14: ${{ inputs.s14 }}
+      IN_S15: ${{ inputs.s15 }}
+      IN_S16: ${{ inputs.s16 }}
+      IN_S17: ${{ inputs.s17 }}
+      IN_S18: ${{ inputs.s18 }}
+      IN_S19: ${{ inputs.s19 }}
+      IN_S20: ${{ inputs.s20 }}
+      IN_MORE: ${{ inputs.more }}
+      IN_FORCE_BUILD: ${{ inputs.force_build }}
+      IN_KEY_PATCH: ${{ inputs.key_patch }}
+      IN_CERT_PROFILE: ${{ inputs.cert_profile }}
+      IN_ROUTE: ${{ inputs.route }}
+    steps:
+      - name: checkout
+        timeout-minutes: 5
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: prepare
+        timeout-minutes: 5
+        run: bash ci/scripts/step.sh ci/scripts/prepare-run.sh
+
+      - name: hosts
+        if: env.S26 == 'true'
+        timeout-minutes: 2
+        run: bash ci/scripts/step.sh ci/scripts/hosts.sh
+
+      - name: probe
+        timeout-minutes: 10
+        run: bash ci/scripts/step.sh ci/scripts/probe-runner.sh
+
+      - name: server
+        timeout-minutes: 5
+        env:
+          K: ${{ secrets.K }}
+        run: bash ci/scripts/step.sh ci/scripts/server-prepare.sh
+
+      - name: device
+        timeout-minutes: 10
+        run: bash ci/scripts/step.sh ci/scripts/sim-create.sh
+
+      - name: key a
+        timeout-minutes: 2
+        run: echo "APP_CACHE_KEY=a-v1-${UPSTREAM_SHA}-${XCODE_BUILD}-${{ hashFiles('ci/build/**') }}" >> "$GITHUB_ENV"
+
+      - name: restore a
+        id: appcache
+        if: env.FORCE_BUILD != 'true'
+        timeout-minutes: 15
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/app
+          key: ${{ env.APP_CACHE_KEY }}
+
+      - name: plan
+        id: plan
+        timeout-minutes: 2
+        env:
+          APP_HIT: ${{ steps.appcache.outputs.cache-hit }}
+        run: |
+          if [ "$FORCE_BUILD" = true ] || [ "$APP_HIT" != true ]; then b=true; else b=false; fi
+          echo "build=$b" >> "$GITHUB_OUTPUT"
+          if [ "$b" = true ]; then s=built; else s=cache; fi
+          bash ci/scripts/common.sh record app-source "$s" "build=$b force=$FORCE_BUILD cache-hit=${APP_HIT:-none}" > /dev/null
+
+      - name: space
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 15
+        run: bash ci/scripts/step.sh ci/scripts/free-disk.sh
+
+      - name: source
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 15
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.UPSTREAM_SHA }}
+          path: threema-ios
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: patch
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 2
+        run: bash ci/scripts/step.sh ci/build/apply-patches.sh
+
+      - name: restore l1
+        id: libthreema
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 10
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            threema-ios/libthreemaSwift/libthreema.xcframework
+            threema-ios/libthreemaSwift/Sources/libthreemaSwift/Generated/libthreema.swift
+          key: l1-v1-rust${{ env.RUST_LIBTHREEMA }}-${{ hashFiles('threema-ios/libthreema/**', 'threema-ios/scripts/BuildRustLibrary/**', 'ci/build/build-lib1.sh') }}
+
+      - name: restore l2
+        id: saltyrtc
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 10
+        uses: actions/cache/restore@v6
+        with:
+          path: threema-ios/saltyrtc-task-relayed-data-rs/ffi/target/aarch64-apple-ios-sim/release/libsaltyrtc_task_relayed_data_ffi.*
+          key: l2-v1-rust${{ env.RUST_SALTYRTC }}-${{ hashFiles('threema-ios/saltyrtc-task-relayed-data-rs/**', 'ci/build/build-lib2.sh') }}
+
+      - name: tools
+        id: rusttools
+        if: steps.plan.outputs.build == 'true' && (steps.libthreema.outputs.cache-hit != 'true' || steps.saltyrtc.outputs.cache-hit != 'true')
+        timeout-minutes: 15
+        run: mkdir -p "$RUNNER_TEMP/steps" && brew install mise protobuf > "$RUNNER_TEMP/steps/tools.log" 2>&1 && mise --version > /dev/null && protoc --version > /dev/null
+
+      - name: restore r
+        id: rustcache
+        if: steps.rusttools.outcome == 'success'
+        timeout-minutes: 15
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.rustup/toolchains/${{ env.RUST_LIBTHREEMA }}-aarch64-apple-darwin
+            ~/.rustup/toolchains/${{ env.RUST_SALTYRTC }}-aarch64-apple-darwin
+            ~/.rustup/update-hashes
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: r-v1-${{ env.RUST_LIBTHREEMA }}-${{ env.RUST_SALTYRTC }}-${{ hashFiles('threema-ios/libthreema/Cargo.lock', 'threema-ios/saltyrtc-task-relayed-data-rs/ffi/Cargo.lock') }}
+          restore-keys: r-v1-${{ env.RUST_LIBTHREEMA }}-${{ env.RUST_SALTYRTC }}-
+
+      - name: restore t2
+        id: salty_target
+        if: steps.rusttools.outcome == 'success' && steps.saltyrtc.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        uses: actions/cache/restore@v6
+        with:
+          path: threema-ios/saltyrtc-task-relayed-data-rs/ffi/target
+          key: t2-v1-${{ env.RUST_SALTYRTC }}-${{ hashFiles('threema-ios/saltyrtc-task-relayed-data-rs/ffi/Cargo.lock') }}
+
+      - name: build l2
+        if: steps.rusttools.outcome == 'success' && steps.saltyrtc.outputs.cache-hit != 'true'
+        timeout-minutes: 30
+        run: bash ci/scripts/step.sh ci/build/build-lib2.sh
+
+      - name: save l2
+        if: steps.rusttools.outcome == 'success' && steps.saltyrtc.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: threema-ios/saltyrtc-task-relayed-data-rs/ffi/target/aarch64-apple-ios-sim/release/libsaltyrtc_task_relayed_data_ffi.*
+          key: ${{ steps.saltyrtc.outputs.cache-primary-key }}
+
+      - name: save t2
+        if: steps.rusttools.outcome == 'success' && steps.saltyrtc.outputs.cache-hit != 'true' && steps.salty_target.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: threema-ios/saltyrtc-task-relayed-data-rs/ffi/target
+          key: ${{ steps.salty_target.outputs.cache-primary-key }}
+
+      - name: restore t1
+        id: lt_target
+        if: steps.rusttools.outcome == 'success' && steps.libthreema.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        uses: actions/cache/restore@v6
+        with:
+          path: threema-ios/libthreema/target
+          key: t1-v1-${{ env.RUST_LIBTHREEMA }}-${{ hashFiles('threema-ios/libthreema/Cargo.lock') }}
+
+      - name: build l1
+        if: steps.rusttools.outcome == 'success' && steps.libthreema.outputs.cache-hit != 'true'
+        timeout-minutes: 45
+        run: bash ci/scripts/step.sh ci/build/build-lib1.sh
+
+      - name: save l1
+        if: steps.rusttools.outcome == 'success' && steps.libthreema.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            threema-ios/libthreemaSwift/libthreema.xcframework
+            threema-ios/libthreemaSwift/Sources/libthreemaSwift/Generated/libthreema.swift
+          key: ${{ steps.libthreema.outputs.cache-primary-key }}
+
+      - name: save t1
+        if: steps.rusttools.outcome == 'success' && steps.libthreema.outputs.cache-hit != 'true' && steps.lt_target.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: threema-ios/libthreema/target
+          key: ${{ steps.lt_target.outputs.cache-primary-key }}
+
+      - name: save r
+        if: steps.rusttools.outcome == 'success' && steps.rustcache.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.rustup/toolchains/${{ env.RUST_LIBTHREEMA }}-aarch64-apple-darwin
+            ~/.rustup/toolchains/${{ env.RUST_SALTYRTC }}-aarch64-apple-darwin
+            ~/.rustup/update-hashes
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ steps.rustcache.outputs.cache-primary-key }}
+
+      - name: space r
+        if: steps.rusttools.outcome == 'success'
+        timeout-minutes: 10
+        run: |
+          rm -rf threema-ios/libthreema/target
+          d=threema-ios/saltyrtc-task-relayed-data-rs/ffi/target
+          rm -rf "$d/release" "$d/debug" "$d/aarch64-apple-ios-sim/release/deps" "$d/aarch64-apple-ios-sim/release/build" "$d/aarch64-apple-ios-sim/release/.fingerprint"
+          rm -rf ~/.rustup/toolchains/${RUST_LIBTHREEMA}-aarch64-apple-darwin ~/.rustup/toolchains/${RUST_SALTYRTC}-aarch64-apple-darwin ~/.cargo/registry
+          bash ci/scripts/common.sh disk_metric after_rust > /dev/null
+
+      - name: restore w
+        id: webrtc
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 10
+        uses: actions/cache/restore@v6
+        with:
+          path: threema-ios/WebRTC.xcframework
+          key: w-v1-${{ env.WEBRTC_VERSION }}-${{ env.WEBRTC_ZIP_SHA256 }}
+
+      - name: fetch w
+        if: steps.plan.outputs.build == 'true' && steps.webrtc.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        run: bash ci/scripts/step.sh ci/build/fetch-rtc.sh
+
+      - name: save w
+        if: steps.plan.outputs.build == 'true' && steps.webrtc.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: threema-ios/WebRTC.xcframework
+          key: ${{ steps.webrtc.outputs.cache-primary-key }}
+
+      - name: restore p
+        id: spm
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 15
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/spm
+          key: p-v1-${{ env.XCODE_BUILD }}-${{ hashFiles('threema-ios/Threema.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: p-v1-${{ env.XCODE_BUILD }}-
+
+      - name: resolve p
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/build/resolve-packages.sh
+
+      - name: save p
+        if: steps.plan.outputs.build == 'true' && steps.spm.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/spm
+          key: ${{ steps.spm.outputs.cache-primary-key }}
+
+      - name: key source
+        if: steps.plan.outputs.build == 'true' && env.KEY_PATCH == 'source'
+        timeout-minutes: 5
+        run: bash ci/scripts/step.sh ci/scripts/inject-key.sh source threema-ios/ThreemaFramework/Configuration/ThreemaFrameworkConfiguration.plist
+
+      - name: build a
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 80
+        run: bash ci/scripts/step.sh ci/build/build-app.sh
+
+      - name: save a
+        if: steps.plan.outputs.build == 'true' && env.KEY_PATCH == 'bundle'
+        timeout-minutes: 15
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/app
+          key: ${{ env.APP_CACHE_KEY }}
+
+      - name: space
+        if: steps.plan.outputs.build == 'true'
+        timeout-minutes: 10
+        run: |
+          rm -rf "$RUNNER_TEMP/dd" "$RUNNER_TEMP/spm" threema-ios
+          bash ci/scripts/common.sh disk_metric after_build > /dev/null
+
+      - name: key bundle
+        timeout-minutes: 10
+        run: bash ci/scripts/step.sh ci/scripts/inject-key.sh bundle
+
+      - name: start
+        timeout-minutes: 5
+        env:
+          K: ${{ secrets.K }}
+        run: bash ci/scripts/step.sh ci/scripts/server-start.sh
+
+      - name: stage 1
+        id: m1
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m1.sh
+
+      - name: stage 2
+        id: m2
+        if: env.S2 == 'true' && steps.m1.outcome == 'success'
+        timeout-minutes: 30
+        run: bash ci/scripts/step.sh ci/scripts/sim-m2.sh
+
+      - name: stage 3
+        id: m3
+        if: env.S3 == 'true' && steps.m2.outcome == 'success'
+        timeout-minutes: 20
+        env:
+          K: ${{ secrets.K }}
+        run: bash ci/scripts/step.sh ci/scripts/sim-m3.sh
+
+      - name: stage 4
+        id: m4
+        if: env.S4 == 'true' && steps.m3.outcome == 'success'
+        timeout-minutes: 15
+        run: bash ci/scripts/step.sh ci/scripts/sim-m4.sh
+
+      - name: stage 5
+        id: m5
+        if: ${{ !cancelled() && env.S5 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 30
+        run: bash ci/scripts/step.sh ci/scripts/sim-m5.sh
+
+      - name: stage 6
+        id: m6
+        if: ${{ !cancelled() && env.S6 == 'true' && steps.m5.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m6.sh
+
+      - name: stage 7
+        id: m7
+        if: ${{ !cancelled() && env.S7 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m7.sh
+
+      - name: stage 8
+        id: m8
+        if: ${{ !cancelled() && env.S8 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m8.sh
+
+      - name: stage 9
+        id: m9
+        if: ${{ !cancelled() && env.S9 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m9.sh
+
+      - name: stage 10
+        id: m10
+        if: ${{ !cancelled() && env.S10 == 'true' && steps.m9.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m10.sh
+
+      - name: stage 11
+        id: m11
+        if: ${{ !cancelled() && env.S11 == 'true' && steps.m3.outcome == 'success' && (env.S10 != 'true' || steps.m10.outcome == 'success') }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m11.sh
+
+      - name: stage 13
+        id: m13
+        if: ${{ !cancelled() && env.S13 == 'true' && steps.m11.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m13.sh
+
+      - name: stage 14
+        id: m14
+        if: ${{ !cancelled() && env.S14 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m14.sh
+
+      - name: stage 16
+        id: m16
+        if: ${{ !cancelled() && env.S16 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m16.sh
+
+      - name: stage 24
+        id: m24
+        if: ${{ !cancelled() && env.S24 == 'true' && steps.m7.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m24.sh
+
+      - name: stage 17
+        id: m17
+        if: ${{ !cancelled() && env.S17 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m17.sh
+
+      - name: stage 18
+        id: m18
+        if: ${{ !cancelled() && env.S18 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 15
+        run: bash ci/scripts/step.sh ci/scripts/sim-m18.sh
+
+      - name: stage 19
+        id: m19
+        if: ${{ !cancelled() && env.S19 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m19.sh
+
+      - name: stage 21
+        id: m21
+        if: ${{ !cancelled() && env.S21 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m21.sh
+
+      - name: stage 22
+        id: m22
+        if: ${{ !cancelled() && env.S22 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m22.sh
+
+      - name: stage 25
+        id: m25
+        if: ${{ !cancelled() && env.S25 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m25.sh
+
+      - name: stage 20
+        id: m20
+        if: ${{ !cancelled() && env.S20 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m20.sh
+
+      - name: stage 23
+        id: m23
+        if: ${{ !cancelled() && env.S23 == 'true' && steps.m11.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m23.sh
+
+      - name: stage 26
+        id: m26
+        if: ${{ !cancelled() && env.S26 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m26.sh
+
+      - name: stage 12
+        id: m12
+        if: ${{ !cancelled() && env.S12 == 'true' && steps.m9.outcome == 'success' }}
+        timeout-minutes: 25
+        run: bash ci/scripts/step.sh ci/scripts/sim-m12.sh
+
+      - name: stage 15
+        id: m15
+        if: ${{ !cancelled() && env.S15 == 'true' && steps.m3.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash ci/scripts/step.sh ci/scripts/sim-m15.sh
+
+      - name: collect
+        id: collect
+        if: always()
+        timeout-minutes: 10
+        env:
+          CACHE_APP: ${{ steps.appcache.outputs.cache-hit }}
+          CACHE_LIBTHREEMA: ${{ steps.libthreema.outputs.cache-hit }}
+          CACHE_SALTYRTC: ${{ steps.saltyrtc.outputs.cache-hit }}
+          CACHE_RUST: ${{ steps.rustcache.outputs.cache-hit }}
+          CACHE_SALTY_TARGET: ${{ steps.salty_target.outputs.cache-hit }}
+          CACHE_LT_TARGET: ${{ steps.lt_target.outputs.cache-hit }}
+          CACHE_WEBRTC: ${{ steps.webrtc.outputs.cache-hit }}
+          CACHE_SPM: ${{ steps.spm.outputs.cache-hit }}
+        run: bash ci/scripts/step.sh ci/scripts/collect-results.sh
+
+      - name: upload
+        if: always() && steps.collect.outputs.sealed == 'true'
+        timeout-minutes: 15
+        uses: actions/upload-artifact@v7
+        with:
+          name: o-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/out
+          retention-days: 1
+          if-no-files-found: warn
+
+      - name: verdict
+        if: always()
+        timeout-minutes: 2
+        run: bash ci/scripts/step.sh ci/scripts/verdict.sh
+
+  publish:
+    name: publish
+    needs: sim
+    if: always() && needs.sim.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: download
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: o-${{ needs.sim.outputs.attempt || github.run_attempt }}
+          path: ${{ runner.temp }}/incoming
+
+      - name: commit
+        env:
+          SIM_RESULT: ${{ needs.sim.result }}
+          RESULTS_ATTEMPT: ${{ needs.sim.outputs.attempt || github.run_attempt }}
+        run: bash ci/scripts/publish-results.sh "$RUNNER_TEMP/incoming"

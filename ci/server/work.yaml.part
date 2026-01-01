@@ -1,0 +1,3 @@
+  directoryEnabled: true
+  organization: "CI Org"
+  checkInterval: 1m

@@ -1,0 +1,27 @@
+publicUrl: @PUBLIC_URL@
+protocolMode: compatible
+
+listen:
+  http: ":@HTTP_PORT@"
+  chat: ":@CHAT_PORT@"
+
+tls:
+  certificateFile: "@SRV@/tls/server.crt"
+  keyFile: "@SEC@/tls/server.key"
+
+storage:
+  backend: sqlite
+  dsn: "@SRV@/db/db.sqlite"
+
+keys:
+  oppfSigningKeyFile: "@SEC@/oppf-signing.key"
+  chatServerKeyFile: "@SEC@/chat-server.key"
+  workDeltaKeyFile: "@SEC@/work-delta.key"
+
+license:
+  id: ci
+  expires: "2030-12-31"
+  count: 10
+
+
+logLevel: debug

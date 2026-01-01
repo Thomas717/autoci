@@ -1,0 +1,107 @@
+diff --git a/Threema/Settings/SettingsViews/ThreemaWeb/ThreemaWebSettingsView.swift b/Threema/Settings/SettingsViews/ThreemaWeb/ThreemaWebSettingsView.swift
+index 441b7ce..6072280 100644
+--- a/Threema/Settings/SettingsViews/ThreemaWeb/ThreemaWebSettingsView.swift
++++ b/Threema/Settings/SettingsViews/ThreemaWeb/ThreemaWebSettingsView.swift
+@@ -6,6 +6,10 @@ struct ThreemaWebSettingsView: View {
+ 
+     @StateObject private var viewModel = ThreemaWebSettingsViewModel()
+ 
++    #if targetEnvironment(simulator)
++        @State private var simulatorQRPayload = ""
++
++    #endif
+     init(showCloseButton: Bool = false) {
+         self.showCloseButton = showCloseButton
+     }
+@@ -14,6 +18,9 @@ struct ThreemaWebSettingsView: View {
+         List {
+             header
+             webToggle
++            #if targetEnvironment(simulator)
++                simulatorQRPayloadEntry
++            #endif
+             sessions
+         }
+         .tint(.accentColor)
+@@ -111,6 +118,30 @@ struct ThreemaWebSettingsView: View {
+         }
+     }
+ 
++    #if targetEnvironment(simulator)
++        /// CI test patch, not upstream: a simulator has no camera to scan Threema Web's QR code with, so the code's
++        /// Base64 payload is entered here, as `DeviceJoinScanQRCodeView` takes a join URL. A secure field, so that no
++        /// screenshot shows the payload, a single-use secret.
++        @ViewBuilder
++        var simulatorQRPayloadEntry: some View {
++            Section {
++                SecureField(text: $simulatorQRPayload, prompt: Text(verbatim: "Web QR payload")) {
++                    Text(verbatim: "Web QR payload")
++                }
++                .accessibilityIdentifier("SimulatorWebQRPayload")
++
++                Button {
++                    viewModel.connectSimulatorQRPayload(simulatorQRPayload)
++                    simulatorQRPayload = ""
++                } label: {
++                    Text(verbatim: "Connect")
++                }
++                .accessibilityIdentifier("SimulatorWebQRConnect")
++            }
++            .disabled(!viewModel.canScan)
++        }
++
++    #endif
+     @ViewBuilder
+     var sessions: some View {
+         if !viewModel.sessions.isEmpty {
+diff --git a/Threema/Settings/SettingsViews/ThreemaWeb/ThreemaWebSettingsViewModel.swift b/Threema/Settings/SettingsViews/ThreemaWeb/ThreemaWebSettingsViewModel.swift
+index 5ff7d78..2753efe 100644
+--- a/Threema/Settings/SettingsViews/ThreemaWeb/ThreemaWebSettingsViewModel.swift
++++ b/Threema/Settings/SettingsViews/ThreemaWeb/ThreemaWebSettingsViewModel.swift
+@@ -169,5 +169,11 @@ final class ThreemaWebSettingsViewModel: NSObject, ObservableObject {
+     func load() {
+-        canScan = !mdmWebDisabled && DeviceCapabilitiesManager().hasVideoCaptureDevice
++        #if targetEnvironment(simulator)
++            // CI test patch, not upstream: a simulator has no camera, and the QR code's payload is entered by hand
++            // instead (`connectSimulatorQRPayload(_:)`)
++            canScan = !mdmWebDisabled
++        #else
++            canScan = !mdmWebDisabled && DeviceCapabilitiesManager().hasVideoCaptureDevice
++        #endif
+         reloadSessions()
+         cleanupOldNonPermanentSessions()
+     }
+@@ -199,6 +205,33 @@ final class ThreemaWebSettingsViewModel: NSObject, ObservableObject {
+         })
+     }
+ 
++    #if targetEnvironment(simulator)
++        /// CI test patch, not upstream: the Base64 payload of a Threema Web QR code, entered by hand on a simulator,
++        /// which has no camera (`ThreemaWebSettingsView`). It takes the scanner's path: the passcode `scan()` asks
++        /// for, the scanner's parser, and `processScanResult(session:authToken:)` as the scanner's `onCompletion`
++        /// calls it.
++        func connectSimulatorQRPayload(_ payload: String) {
++            guard canScan else {
++                return
++            }
++
++            passcodeRouter.requireAuthenticationIfNeeded(onSuccess: { [weak self] in
++                guard let self else {
++                    return
++                }
++                guard case let .webSession(session, authToken)? = qrCodeParser.parse(
++                    payload.trimmingCharacters(in: .whitespacesAndNewlines)
++                ) else {
++                    alertTitle = #localize("qr_code_scanner_unrecognized_code_error_title")
++                    alertMessage = #localize("qr_code_scanner_unrecognized_code_error_message")
++                    showAlert = true
++                    return
++                }
++                processScanResult(session: session, authToken: authToken)
++            })
++        }
++
++    #endif
+     func close() {
+         topViewController.dismiss(animated: true)
+     }
